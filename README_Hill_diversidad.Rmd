@@ -1,0 +1,348 @@
+---
+title: "Curvas de diversidad de Hill por estrato y transecto"
+author: ""
+output:
+  github_document:
+    toc: true
+    toc_depth: 3
+    fig_width: 10
+    fig_height: 6
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.path = "figuras/",
+  dpi = 300
+)
+```
+
+# Descripción del análisis
+
+Este documento reproduce el análisis de diversidad de Hill para moluscos bentónicos del POT, usando los números efectivos de especies para los órdenes \(q = 0\), \(q = 1\) y \(q = 2\).
+
+El análisis se presenta en dos niveles:
+
+1. **Por estrato batimétrico**, para evaluar el gradiente vertical de diversidad.
+2. **Por transecto**, para evaluar la variación espacial de la diversidad.
+
+La abundancia utilizada corresponde a una **abundancia proxy**, calculada como el número de registros por especie dentro de cada estrato o transecto.
+
+# Cargar paquetes
+
+```{r paquetes}
+library(dplyr)
+library(tidyr)
+library(iNEXT)
+library(ggplot2)
+library(tibble)
+library(readr)
+```
+
+# Cargar base de datos
+
+```{r cargar-base}
+base <- read.csv("Base_completa.csv")
+```
+
+# Diversidad de Hill por estrato
+
+## Abundancia proxy por estrato
+
+```{r abundancia-estrato}
+abund_proxy_Estrato <- base %>%
+  filter(!is.na(Estrato), Estrato != "") %>%
+  group_by(Estrato, Especies) %>%
+  summarise(abundancia = n(), .groups = "drop")
+
+head(abund_proxy_Estrato)
+```
+
+## Matriz de comunidad por estrato
+
+```{r matriz-estrato}
+mat_estrato <- abund_proxy_Estrato %>%
+  pivot_wider(
+    names_from = Especies,
+    values_from = abundancia,
+    values_fill = 0
+  ) %>%
+  column_to_rownames("Estrato")
+
+lista_estrato <- apply(mat_estrato, 1, function(x) x[x > 0])
+```
+
+## Estimación con iNEXT
+
+```{r inext-estrato}
+hill_estrato <- iNEXT(
+  lista_estrato,
+  q = c(0, 1, 2),
+  datatype = "abundance",
+  nboot = 200
+)
+```
+
+## Datos para graficar
+
+```{r datos-grafica-estrato}
+df_plot <- hill_estrato$iNextEst$size_based %>%
+  mutate(
+    Estrato = factor(
+      Assemblage,
+      levels = c("Batial superior", "Batial  medio",
+                 "Batial inferior", "Abisal superior")
+    ),
+    q = factor(
+      Order.q,
+      levels = c(0, 1, 2),
+      labels = c("q = 0", "q = 1", "q = 2")
+    ),
+    Metodo_linea = case_when(
+      Method == "Rarefaction" ~ "Rarefacción",
+      Method == "Extrapolation" ~ "Extrapolación",
+      Method == "Observed" ~ "Rarefacción"
+    )
+  )
+
+head(df_plot)
+```
+
+## Gráfica de diversidad por estrato
+
+```{r grafica-estrato, fig.width=14, fig.height=5.5}
+p_hill_estratos <- ggplot(df_plot, aes(x = m, y = qD, color = q, fill = q)) +
+
+  geom_ribbon(aes(ymin = qD.LCL, ymax = qD.UCL),
+              alpha = 0.18, color = NA) +
+
+  geom_line(aes(linetype = Metodo_linea), linewidth = 1.1) +
+
+  geom_point(
+    data = df_plot %>% filter(Method == "Observed"),
+    aes(shape = q),
+    size = 3.8,
+    stroke = 1
+  ) +
+
+  facet_wrap(~ Estrato, scales = "free_y", ncol = 4) +
+
+  scale_linetype_manual(
+    values = c("Rarefacción" = "solid", "Extrapolación" = "dashed"),
+    name = NULL
+  ) +
+
+  scale_shape_manual(
+    values = c("q = 0" = 16, "q = 1" = 17, "q = 2" = 15),
+    name = "Orden de diversidad"
+  ) +
+
+  scale_color_manual(
+    values = c("q = 0" = "#D95F02",
+               "q = 1" = "#1F78B4",
+               "q = 2" = "#CC79A7"),
+    name = "Orden de diversidad"
+  ) +
+
+  scale_fill_manual(
+    values = c("q = 0" = "#D95F02",
+               "q = 1" = "#1F78B4",
+               "q = 2" = "#CC79A7"),
+    name = "Orden de diversidad"
+  ) +
+
+  labs(
+    x = "Tamaño de muestra (número de registros / abundancia proxy)",
+    y = "Diversidad de especies (número efectivo de especies)"
+  ) +
+
+  theme_bw(base_size = 14) +
+  theme(
+    strip.background = element_rect(fill = "grey85", color = "grey85"),
+    strip.text = element_text(face = "bold"),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+p_hill_estratos
+```
+
+```{r guardar-grafica-estrato}
+ggsave("Curvas_Hill_Estratos.png", p_hill_estratos,
+       width = 14, height = 5.5, dpi = 300)
+```
+
+# Diversidad de Hill por transecto
+
+## Filtrar transectos válidos
+
+```{r filtrar-transectos}
+base_transecto <- base %>%
+  filter(
+    !is.na(Transecto),
+    Transecto != "",
+    Transecto != " ",
+    Transecto != "Sin transecto"
+  )
+```
+
+## Abundancia proxy por transecto
+
+```{r abundancia-transecto}
+abund_proxy_Transecto <- base_transecto %>%
+  group_by(Transecto, Especies) %>%
+  summarise(abundancia = n(), .groups = "drop")
+
+head(abund_proxy_Transecto)
+```
+
+## Matriz de comunidad por transecto
+
+```{r matriz-transecto}
+mat_transecto <- abund_proxy_Transecto %>%
+  pivot_wider(
+    names_from = Especies,
+    values_from = abundancia,
+    values_fill = 0
+  ) %>%
+  column_to_rownames("Transecto")
+
+lista_transecto <- apply(mat_transecto, 1, function(x) x[x > 0])
+```
+
+## Estimación con iNEXT
+
+```{r inext-transecto}
+hill_transecto <- iNEXT(
+  lista_transecto,
+  q = c(0, 1, 2),
+  datatype = "abundance",
+  nboot = 200
+)
+```
+
+## Datos para graficar
+
+```{r datos-grafica-transecto}
+df_plot_tr <- hill_transecto$iNextEst$size_based %>%
+  mutate(
+    Transecto = factor(
+      Assemblage,
+      levels = sort(unique(Assemblage))
+    ),
+    q = factor(
+      Order.q,
+      levels = c(0, 1, 2),
+      labels = c("q = 0", "q = 1", "q = 2")
+    ),
+    Metodo_linea = case_when(
+      Method == "Rarefaction"   ~ "Rarefacción",
+      Method == "Extrapolación" ~ "Extrapolación",
+      Method == "Extrapolation" ~ "Extrapolación",
+      Method == "Observed"      ~ "Rarefacción"
+    )
+  )
+
+head(df_plot_tr)
+```
+
+```{r guardar-valores-transecto}
+write.csv(df_plot_tr, "diversidad_transecto_valores.csv", row.names = FALSE)
+```
+
+## Gráfica de diversidad por transecto
+
+```{r grafica-transecto, fig.width=16, fig.height=9}
+p_hill_transectos <- ggplot(
+  df_plot_tr,
+  aes(x = m, y = qD, color = q, fill = q)
+) +
+
+  geom_ribbon(
+    aes(ymin = qD.LCL, ymax = qD.UCL),
+    alpha = 0.18,
+    color = NA
+  ) +
+
+  geom_line(
+    aes(linetype = Metodo_linea),
+    linewidth = 1.1
+  ) +
+
+  geom_point(
+    data = df_plot_tr %>% filter(Method == "Observed"),
+    aes(shape = q),
+    size = 3.4,
+    stroke = 1
+  ) +
+
+  facet_wrap(~ Transecto, scales = "free_y", ncol = 4) +
+
+  scale_linetype_manual(
+    values = c("Rarefacción" = "solid", "Extrapolación" = "dashed"),
+    name = NULL
+  ) +
+
+  scale_shape_manual(
+    values = c("q = 0" = 16, "q = 1" = 17, "q = 2" = 15),
+    name = "Orden de diversidad"
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "q = 0" = "#D95F02",
+      "q = 1" = "#1F78B4",
+      "q = 2" = "#CC79A7"
+    ),
+    name = "Orden de diversidad"
+  ) +
+
+  scale_fill_manual(
+    values = c(
+      "q = 0" = "#D95F02",
+      "q = 1" = "#1F78B4",
+      "q = 2" = "#CC79A7"
+    ),
+    name = "Orden de diversidad"
+  ) +
+
+  labs(
+    x = "Tamaño de muestra (número de registros / abundancia proxy)",
+    y = "Diversidad de especies (número efectivo de especies)"
+  ) +
+
+  theme_bw(base_size = 14) +
+  theme(
+    strip.background = element_rect(fill = "grey85", color = "grey85"),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(1, "lines")
+  )
+
+p_hill_transectos
+```
+
+```{r guardar-grafica-transecto}
+ggsave(
+  "Curvas_Hill_Transectos.png",
+  p_hill_transectos,
+  width = 16,
+  height = 9,
+  dpi = 300
+)
+```
+
+# Notas para reproducibilidad
+
+Para que este documento funcione en GitHub, guarda en el mismo repositorio:
+
+- `README.Rmd`
+- `README.md`, generado con Knit
+- `Base_completa.csv`
+- la carpeta `figuras/`, generada automáticamente al compilar
+
+Para compilarlo desde RStudio, abre `README.Rmd` y presiona **Knit**.
